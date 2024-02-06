@@ -1,0 +1,319 @@
+---
+title: Optimize cumulative variations of longitudinal biomarkers to advance personalized
+  health care
+author: "Yushu Wang"
+date: "2023-08-23"
+output: html_document
+---
+
+## Project: Optimize cumulative variations of longitudinal         ####
+            biomarkers to advance personalized health care         ####
+## Script purpose: Real word data application                      ####
+## Date: Aug 23, 2023                                              ####
+## Author: Yushu Wang                                              ####
+## Division: Division of Biostatistics, MCW                        ####
+## Note: this codes were used to illustrate computational gains    ####
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+```{r}
+library(tidyverse)
+library(gtsummary)
+library(ggplot2)
+library(data.table)
+library(lme4)
+library(splines)
+library(pracma)
+library(gridExtra)
+```
+
+## Load data
+```{r}
+PAP_month <- read.csv("...")  #longitudinal data
+survival <- read.csv("...") #survival data
+```
+
+## tables
+table 1 Univariate analysis of baseline characteristics
+```{r}
+PAP_month$Group[PAP_month$Group == "HFrEF/HFbEF"] <- "HFrbEF"
+table1 <- survival %>%
+  dplyr::select(Group, age, sex, race, marital_status_r, employment_status_r, vital_status, LOS_y, ad_y, Cardiomyopathy, Coronary.Artery.Disease, Diabetes, Hypertension, Atrial.Fibrillation, COPD, Chronic.Kidney.Disease, BMI) %>%
+  tbl_summary(by = Group, statistic = list(all_continuous() ~ "{mean}({min}, {max})"),digits = list(all_continuous() ~ c(2, 2))) %>%
+  add_p(pvalue_fun = function(x) style_number(x, digits = 3))
+table1
+```
+
+table 2 Longitudinal outcome summary statistics
+```{r}
+# 0-6 months
+PAP_month %>% 
+  group_by(ID) %>%
+  mutate(max_time = max(long_time)) %>%
+  filter(max_time <= 0.5) %>%
+  ungroup() %>%
+  group_by(Group) %>%
+  summarise(n = n_distinct(ID),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ mean(.x, na.rm = TRUE), .names = "mean_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ sd(.x, na.rm = TRUE), .names = "sd_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ min(.x, na.rm = TRUE), .names = "min_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ max(.x, na.rm = TRUE), .names = "max_{col}")
+            )
+
+# 6-12 months
+PAP_month %>% 
+  group_by(ID) %>%
+  mutate(max_time = max(long_time)) %>%
+  filter(max_time > 0.5 & max_time <= 1) %>%
+  ungroup() %>%
+  group_by(Group) %>%
+  summarise(n = n_distinct(ID),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ mean(.x, na.rm = TRUE), .names = "mean_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ sd(.x, na.rm = TRUE), .names = "sd_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ min(.x, na.rm = TRUE), .names = "min_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ max(.x, na.rm = TRUE), .names = "max_{col}")
+            )
+
+# 12-18 months
+PAP_month %>% 
+  group_by(ID) %>%
+  mutate(max_time = max(long_time)) %>%
+  filter(max_time > 1 & max_time <= 1.5) %>%
+  ungroup() %>%
+  group_by(Group) %>%
+  summarise(n = n_distinct(ID),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ mean(.x, na.rm = TRUE), .names = "mean_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ sd(.x, na.rm = TRUE), .names = "sd_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ min(.x, na.rm = TRUE), .names = "min_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ max(.x, na.rm = TRUE), .names = "max_{col}")
+            )
+
+# 18-24 months
+PAP_month %>% 
+  group_by(ID) %>%
+  mutate(max_time = max(long_time)) %>%
+  filter(max_time > 1.5 & max_time <= 2) %>%
+  ungroup() %>%
+  group_by(Group) %>%
+  summarise(n = n_distinct(ID),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ mean(.x, na.rm = TRUE), .names = "mean_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ sd(.x, na.rm = TRUE), .names = "sd_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ min(.x, na.rm = TRUE), .names = "min_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ max(.x, na.rm = TRUE), .names = "max_{col}")
+            )
+
+# >24 months
+PAP_month %>% 
+  group_by(ID) %>%
+  mutate(max_time = max(long_time)) %>%
+  filter(max_time > 2) %>%
+  ungroup() %>%
+  group_by(Group) %>%
+  summarise(n = n_distinct(ID),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ mean(.x, na.rm = TRUE), .names = "mean_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ sd(.x, na.rm = TRUE), .names = "sd_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ min(.x, na.rm = TRUE), .names = "min_{col}"),
+            across(c(heart_rate, systolic_PAP, diastolic_PAP, mean_PAP), ~ max(.x, na.rm = TRUE), .names = "max_{col}")
+            )
+
+```
+
+
+## 3.2 cross-validation
+```{r}
+library(doParallel)
+n_core <- detectCores() - 1
+cl <- parallel::makeCluster(n_core)
+doParallel::registerDoParallel(cl)
+
+#heart rate
+hr_RMSE <- vector(mode = "list", length = 5) #spap, dpap, mpap
+start.time <- Sys.time()
+knots <- list(0.5, c(0.25,0.75), c(0.25,0.5,0.75))
+hr_RMSE <- foreach(i = 3:7, .packages=c("lme4", "splines", "hetoolkit")) %dopar% {
+  rmse_i <- numeric(2)
+  for (j in 1:3) {
+    lme.hr <- lmer(heart_rate ~  long_time + (1 + bs(long_time, knots = quantile(long_time, knots[[j]]), Boundary.knots = range(long_time), degree = i)|ID), data = PAP_month)
+    out <- model_cv(model = lme.hr, data = PAP_month, group = "ID", k = 5, r=10)
+   rmse_i[j] <- out$RMSE
+  }
+  return(list(rmse_i))
+}
+end.time <- Sys.time()
+
+```
+
+### plot
+```{r}
+degree <- 4
+lme.hr <- lmer(heart_rate ~  long_time + (1 + bs(long_time, knots = quantile(long_time, c(0.25, 0.75)), Boundary.knots = range(long_time), degree = degree)|ID), data = PAP_month) #spap, dpap, mpap
+
+#predict data
+id_all <- unique(PAP_month$ID)
+long_time <- c()
+ID <- c()
+for (id in id_all) {
+  long_time <- append(long_time, seq(0, max(PAP_month$long_time[PAP_month$ID == id]), by = max(PAP_month$long_time)/1000))
+  ID <- append(ID, rep(id, length(seq(0, max(PAP_month$long_time[PAP_month$ID == id]), by = max(PAP_month$long_time)/1000))))
+}
+
+new_pap <- data.frame(ID = ID, long_time = long_time)
+pred_hr <- predict(lme.hr, new_pap)
+new_pap <- cbind(new_pap, pred_hr)
+
+#arc length
+degree <- 4;interval <- 0.001;fixcoef <- fixef(lme.hr); rancoef <- ranef(lme.hr)$ID
+deltat <- c(1/6, 1/3, 0.5, 1, 1.5)
+arc <- c() #arc2, arc4, arc6, arc12, arc18
+for (id in id_all) {
+  endtime <- max(new_pap$long_time[new_pap$ID == id])
+  starttime <- endtime - endtime #starttime <- endtime - deltat
+  b_vec <- unlist(c(fixcoef, rancoef[rownames(rancoef) == id,]))
+  if(starttime >= 0){
+  gt <- seq(starttime, endtime, by = interval)
+  b_mat <- cbind(rep(1,length(gt)), gt, rep(1,length(gt)), bs(gt, knots = quantile(PAP_month$long_time, c(0.25, 0.75)), Boundary.knots = range(PAP_month$long_time), degree = degree))
+  g_grid <- b_mat %*% b_vec
+  arc <- append(arc, sum(sqrt((g_grid[-length(gt)]-g_grid[-1])^2+interval^2)))} #arc2, arc4, arc6, arc12, arc18
+  else{arc <- append(arc, NA)}
+}
+
+
+arc_length <- data.frame(ID = id_all)
+arc_length$arc_hr <- arc
+arc_length$m2_hr <- arc2
+arc_length$m4_hr <- arc4
+arc_length$m6_hr <- arc6
+arc_length$m12_hr <- arc12
+arc_length$m18_hr <- arc18
+
+
+#plot
+plot_list <- list()
+id_select <- c(20,21,38,70,11,67)
+for (id in id_select) {
+  i <- which(id_select == id)
+  df <- PAP_month[PAP_month$ID == id,]
+  df1 <- new_pap[new_pap$ID == id,]
+  
+  p <- ggplot() + 
+    geom_point(df, mapping = aes(long_time, heart_rate), size = 1) + 
+    geom_line(df1, mapping = aes(long_time, pred_hr), color = "blue") +
+    annotate(geom = "text", x = 4.5, y = 105, label = paste("mean = ", round(mean(df$heart_rate),2), "\ncumulative variation =", round(arc_length$arc_hr[arc_length$ID == id],3)), hjust = 1) +
+    geom_vline(xintercept = max(df$long_time), color =  "red", linetype="dotdash") +
+    xlim(0,4.5) +
+    ylim(65,110) +
+    ggtitle(paste0("Subject ", id)) +
+    theme_classic() + 
+    theme(plot.title = element_text(hjust = 0.5)) 
+  plot_list[[i]] <- p
+}
+
+grid.arrange(grobs = plot_list, ncol = 3)
+```
+
+## 3.3 Kruskal-Wallis test
+Group
+```{r}
+arc_length <- merge(arc_length, survival[,c("Study.ID", "Group")], by.x = "ID", by.y = "Study.ID")
+#check normality
+normality <- sapply(arc_length[, !colnames(arc_length) %in% c("ID", "Group")], function(col) shapiro.test(col)$p.value)
+length(which(normality > 0.05)) #0
+
+#data exclude 0
+krus_test_adj <- c()
+for (i in 2:25) {
+  krus_test <- kruskal.test(na.omit(arc_length[, i]), arc_length$Group[!is.na(arc_length[, i])])$p.value
+  krus_test_adj <- append(krus_test_adj, p.adjust(krus_test, method = "holm"))
+}
+
+names(krus_test_adj) <- variable.names(arc_length)[2:25]
+krus_test_adj[which(krus_test_adj < 0.05)]
+
+arc_length %>%
+  group_by(Group) %>%
+  summarise(across(c(which(krus_test_adj < 0.05)+1), list(count = ~ sum(. != 0, na.rm = T), mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE), median = ~ median(.x, na.rm = TRUE), Q1 = ~quantile(.x, 0.25,  na.rm = TRUE), Q3 = ~quantile(.x, 0.75,  na.rm = TRUE))))
+
+```
+
+death
+```{r}
+arc_length <- merge(arc_length, survival[,c("Study.ID", "vital_status")], by.x = "ID", by.y = "Study.ID")
+
+krus_test_death <- c()
+for (i in 2:25) {
+  krus_test <- kruskal.test(na.omit(arc_length[, i]), arc_length$vital_status[!is.na(arc_length[, i])])$p.value
+  krus_test_death <- append(krus_test_death, p.adjust(krus_test, method = "holm"))
+}
+
+names(krus_test_death) <- variable.names(arc_length)[2:25]
+krus_test_death[which(krus_test_death < 0.05)]
+
+arc_length %>%
+  group_by(vital_status) %>%
+  summarise(across(c(which(krus_test_death < 0.05)+1), list(count = ~ sum(. != 0, na.rm = T), mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE), median = ~ median(.x, na.rm = TRUE), Q1 = ~quantile(.x, 0.25,  na.rm = TRUE), Q3 = ~quantile(.x, 0.75,  na.rm = TRUE))))
+```
+
+BMI
+```{r}
+survival$BMI_c <- cut(survival$BMI,
+              breaks=c(min(survival$BMI), 18.5, 24.9, max(survival$BMI)),
+              labels=c("Unhealthy","Healthy", "Unhealthy"))
+arc_length <- merge(arc_length, survival[,c("Study.ID", "BMI_c")], by.x = "ID", by.y = "Study.ID")
+
+krus_test_BMI <- c()
+for (i in 2:25) {
+  krus_test <- kruskal.test(na.omit(arc_length[, i]), arc_length$BMI_c[!is.na(arc_length[, i])])$p.value
+  krus_test_BMI <- append(krus_test_BMI, p.adjust(krus_test, method = "holm"))
+}
+
+names(krus_test_BMI) <- variable.names(arc_length)[2:25]
+krus_test_BMI[which(krus_test_BMI < 0.05)]
+
+arc_length %>%
+  group_by(BMI_c) %>%
+  summarise(across(c(which(krus_test_BMI < 0.05)+1), list(count = ~ sum(. != 0, na.rm = T), mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE), median = ~ median(.x, na.rm = TRUE), Q1 = ~quantile(.x, 0.25,  na.rm = TRUE), Q3 = ~quantile(.x, 0.75,  na.rm = TRUE))))
+```
+
+race
+```{r}
+arc_length <- merge(arc_length, survival[,c("Study.ID", "race")], by.x = "ID", by.y = "Study.ID")
+arc_length$race <- as.factor(arc_length$race)
+
+krus_test_race <- c()
+for (i in 2:25) {
+  krus_test <- kruskal.test(na.omit(arc_length[, i]), arc_length$race[!is.na(arc_length[, i])])$p.value
+  krus_test_race <- append(krus_test_race, p.adjust(krus_test, method = "holm"))
+}
+
+names(krus_test_race) <- variable.names(arc_length)[2:25]
+krus_test_race[which(krus_test_race < 0.05)]
+
+arc_length %>%
+  group_by(race) %>%
+  summarise(across(c(which(krus_test_race < 0.05)+1), list(count = ~ sum(. != 0, na.rm = T), mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE), median = ~ median(.x, na.rm = TRUE), Q1 = ~quantile(.x, 0.25,  na.rm = TRUE), Q3 = ~quantile(.x, 0.75,  na.rm = TRUE))))
+```
+
+age_c
+```{r}
+arc_length <- merge(arc_length, survival[,c("Study.ID", "age_c")], by.x = "ID", by.y = "Study.ID")
+arc_length$age_c <- as.factor(arc_length$age_c)
+
+krus_test_age <- c()
+for (i in 2:25) {
+  krus_test <- kruskal.test(na.omit(arc_length[, i]), arc_length$age_c[!is.na(arc_length[, i])])$p.value
+  krus_test_age <- append(krus_test_age, p.adjust(krus_test, method = "holm"))
+}
+
+names(krus_test_age) <- variable.names(arc_length)[2:25]
+krus_test_age[which(krus_test_age < 0.05)]
+
+arc_length %>%
+  group_by(age_c) %>%
+  summarise(across(c(which(krus_test_age < 0.05)+1), list(count = ~ sum(. != 0, na.rm = T), mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE), median = ~ median(.x, na.rm = TRUE), Q1 = ~quantile(.x, 0.25,  na.rm = TRUE), Q3 = ~quantile(.x, 0.75,  na.rm = TRUE))))
+```
+
+
+
