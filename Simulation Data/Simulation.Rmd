@@ -1,0 +1,605 @@
+---
+title: Optimize cumulative variations of longitudinal biomarkers to advance personalized
+  health care
+author: "Yushu Wang"
+date: "2023-01-12"
+output: html_document
+---
+
+## Project: Optimize cumulative variations of longitudinal         ####
+            biomarkers to advance personalized health care         ####
+## Script purpose: Simulations                                     ####
+## Date: Jan 12, 2023                                              ####
+## Author: Yushu Wang                                              ####
+## Division: Division of Biostatistics, MCW                        ####
+## Note: this codes were used to illustrate computational gains    ####
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+```{r}
+library(ggplot2)
+library(lme4)
+library(splines)
+library(gridExtra)
+library(tidyverse)
+```
+
+# simulation
+## 4.1 linear mixed effect model
+### random intercept
+```{r}
+set.seed(911)
+n <- 1000; obs <- 40
+beta <- 15
+time <- runif(n*obs, 0.1, 4)
+ID <- rep(1:n, obs)
+beta0 <- 2
+
+#random effect
+random_effect <- rnorm(n, 0, 2)
+subject_effect <- random_effect[ID]
+var(subject_effect); mean(subject_effect)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#data generating model
+y <- beta0 + beta*time + subject_effect + epsilon
+df2 <- data.frame(time = time, ID = ID, y = y)
+
+#model fitting
+me.fit <- lmer(y ~ time + (1 | ID), data = df2)
+summary(me.fit)
+```
+
+### random slope
+```{r}
+set.seed(911)
+n <- 10000; obs <- 40
+beta <- 15; beta0 <- 2
+time <- runif(n*obs, 0.1, 4)
+ID <- rep(1:n, obs)
+group <- sample(c(1,2), size = n, replace = T)
+group <- group[ID]
+
+#random effect
+sigma_0 <- 1.5; sigma_1 <- 1.0
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1,
+                  0.3*sigma_0*sigma_1, sigma_1^2), nrow = 2)
+b <- MASS::mvrnorm(n, c(0.1, 0.2), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+B0 <- b0[ID]; B1 <- b1[ID]
+mean(b0); mean(b1); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#data generating 
+y <- beta0 + beta*group + B0 + B1*time  + epsilon
+df3 <- data.frame(ID = ID, time = time, group = group, y = y)
+
+#fitting model
+lme.fit <- lmer(y ~ group + (1 + time  | ID), data = df3)
+summary(lme.fit)
+```
+
+## LME with splines
+### spline on fixed effect
+```{r}
+set.seed(911)
+n <- 10000; obs <- 40
+beta0 <- 2
+time <- runif(n*obs, 0.1, 4)
+ID <- rep(1:n, obs)
+group <- sample(c(1,2), size = n, replace = T)
+group <- group[ID]
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = range(time), degree = degree)
+
+#generate fixed coefficients
+library(MASS)
+b_m <- c(10, 15, 20)
+
+#random effect
+sigma_0 <- 1.5; sigma_1 <- 1.0
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_1, sigma_1^2), nrow = 2)
+b <- MASS::mvrnorm(n, c(0.1, 0.2), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+B0 <- b0[ID]; B1 <- b1[ID]
+mean(b0); mean(b1); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+y <- beta0 + bs_m%*%b_m + B0 + B1*time + epsilon
+df4 <- data.frame(ID = ID, time = time, group = group, y = y)
+
+#model fitting
+lme.bs.fix <- lmer(y ~ bs(time, Boundary.knots = range(time), degree = degree) + (1 + time | ID), data = df4, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs.fix)
+
+```
+
+### spline on random effect (degree=3)
+spline on random effect with fixed intercept only
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,0), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2), nrow = 3)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]
+mean(b0); mean(b1); mean(b2); cov(b)
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+#fix effect coef
+beta <- 1.5; beta0 <- 0.2
+epsilon <- rnorm(n*obs, 0, 4)
+
+y <-  beta0 + beta*group + B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + epsilon
+df.s2 <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3])
+
+#fitting model
+lme.bs2 <- lmer(y ~ group + (-1 + bs1 + bs2 + bs3 | ID), data = df.s2, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs2)
+```
+
+spline on random effect with random intercept only
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,0), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2; sigma_3 <- 1.5
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2, 0.3*sigma_0*sigma_3,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2, 0.3*sigma_1*sigma_3,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2, 0.3*sigma_2*sigma_3,
+                  0.3*sigma_0*sigma_3, 0.3*sigma_1*sigma_3, 0.3*sigma_2*sigma_3, sigma_3^2), nrow = 4)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3, 0.15), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+b3 <- b[,4]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]; B3 <- b3[ID]
+mean(b0); mean(b1); mean(b2); mean(b3); cov(b)
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+#fix effect coef
+beta <- 1.5
+epsilon <- rnorm(n*obs, 0, 4)
+
+y <-  beta*group + B0 + B1*bs_m[,1] + B2*bs_m[,2] + B3*bs_m[,3] + epsilon
+df.s3 <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3])
+
+#fitting model
+lme.bs3 <- lmer(y ~ -1 + group + (bs1 + bs2 + bs3 | ID), data = df.s3, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs3)
+```
+
+spline on random effect with fixed and random intercepts
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,0), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2; sigma_3 <- 1.5
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2, 0.3*sigma_0*sigma_3,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2, 0.3*sigma_1*sigma_3,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2, 0.3*sigma_2*sigma_3,
+                  0.3*sigma_0*sigma_3, 0.3*sigma_1*sigma_3, 0.3*sigma_2*sigma_3, sigma_3^2), nrow = 4)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3, 0.15), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+b3 <- b[,4]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]; B3 <- b3[ID]
+mean(b0); mean(b1); mean(b2); mean(b3); cov(b)
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+#fix effect coef
+beta <- 1.5; beta0 <- 0.2
+epsilon <- rnorm(n*obs, 0, 4)
+
+y <- beta0 + beta*group + B0 + B1*bs_m[,1] + B2*bs_m[,2] + B3*bs_m[,3] + epsilon
+df.s4 <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3])
+
+#fitting model
+lme.bs4 <- lmer(y ~ group + (bs1 + bs2 + bs3 | ID), data = df.s4, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs4)
+
+```
+
+spline on random effect without intercept
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+beta <- 1.5
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,0), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2), nrow = 3)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]
+mean(b0); mean(b1); mean(b2); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+y <-  beta*group + B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + epsilon
+df <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3])
+
+#model fitting
+lme.bs <- lmer(y ~ -1 + group + (-1 + bs1 + bs2 + bs3 | ID), data = df, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs)
+```
+
+## 4.2 Access different splines
+degree = 4
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+beta <- 1.5
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,2), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2; sigma_3 <- 1.5
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2, 0.3*sigma_0*sigma_3,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2, 0.3*sigma_1*sigma_3,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2, 0.3*sigma_2*sigma_3,
+                  0.3*sigma_0*sigma_3, 0.3*sigma_1*sigma_3, 0.3*sigma_2*sigma_3, sigma_3^2), nrow = 4)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3, 0.15), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+b3 <- b[,4]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]; B3 <- b3[ID]
+mean(b0); mean(b1); mean(b2); mean(b3); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#b-spline
+degree <- 4
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+y <-  beta*group + B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + B3*bs_m[,4] + epsilon
+df <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3], bs4 = bs_m[,4])
+
+#model fitting
+lme.bs <- lmer(y ~ -1 + group + (-1 + bs1 + bs2 + bs3 + bs4 | ID), data = df, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs)
+```
+
+degree = 4, knots = 3
+```{r}
+set.seed(1234)
+n <- 10000; obs <- 40
+beta <- 1.5
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- sample(c(1,2), size = n, replace = T)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2; sigma_3 <- 1.5; sigma_4 <- 2.5
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2, 0.3*sigma_0*sigma_3, 0.3*sigma_0*sigma_4,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2, 0.3*sigma_1*sigma_3, 0.3*sigma_1*sigma_4,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2, 0.3*sigma_2*sigma_3, 0.3*sigma_2*sigma_4,
+                  0.3*sigma_0*sigma_3, 0.3*sigma_1*sigma_3, 0.3*sigma_2*sigma_3, sigma_3^2, 0.3*sigma_3*sigma_4,
+                  0.3*sigma_0*sigma_4, 0.3*sigma_1*sigma_4, 0.3*sigma_2*sigma_4, 0.3*sigma_3*sigma_4, sigma_4^2), nrow = 5)
+b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3, 0.2, 0.1), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+b3 <- b[,4]
+b4 <- b[,5]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]; B3 <- b3[ID]; B4 <- b4[ID]
+mean(b0); mean(b1); mean(b2); mean(b3); mean(b4); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#b-spline
+degree <- 4
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), knots = median(time), degree = degree)
+
+y <-  beta*group + B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + B3*bs_m[,4] + B4*bs_m[,5] + epsilon
+df <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3], bs4 = bs_m[,4], bs5 = bs_m[,5])
+
+#model fitting
+lme.bs <- lmer(y ~ -1 + group + (-1 + bs1 + bs2 + bs3 + bs4 + bs5| ID), data = df, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs)
+```
+
+Cumulative variation and plots (degree=3, degree=4 with little changes of the codes)
+```{r}
+#predict data
+long_time <- c()
+ID <- c()
+group <- c()
+for (id in c(1:50)) {
+  long_time <- append(long_time, seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))
+  ID <- append(ID, rep(id, length(seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))))
+  group <- append(group, rep(df$group[df$ID == id][1], length(seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))))
+}
+
+bs_m_test <- bs(long_time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+new_sim <- data.frame(ID = ID, time = long_time, group = group)
+new_sim <- cbind(new_sim, bs_m_test)
+names(new_sim)[4:6] <- c("bs1", "bs2", "bs3") #, "bs4", "bs5")
+new_sim$pred <- predict(lme.bs, new_sim)
+
+#arc length
+degree <- 3;interval <- 0.001;fixcoef <- fixef(lme.bs); rancoef <- ranef(lme.bs)$ID #degree = 4
+arc <- c()
+for (id in c(1:50)) {
+  endtime <- max(new_sim$time[new_sim$ID == id])
+  starttime <- min(new_sim$time[new_sim$ID == id])
+  group_index <- new_sim$group[new_sim$ID == id][1]
+  b_vec <- unlist(c(fixcoef, rancoef[rownames(rancoef) == id,]))
+  gt <- seq(starttime, endtime, by = interval)
+  b_mat <- cbind(group_index, bs(gt, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)) # ,knots = median(time)
+  g_grid <- b_mat %*% b_vec
+  arc <- append(arc, sum(sqrt((g_grid[-length(gt)]-g_grid[-1])^2+interval^2)))
+}
+
+
+#plot 
+sim_plot <- list() #sim_plotd4, sim_plotd4k3
+select_sim_id <- c(29, 30, 3, 48, 38, 18)
+for (id in c(1:1)) {
+  i <- which(select_sim_id == id)
+  df1 <- df[df$ID == id,]
+  df2 <- new_sim[new_sim$ID == id,]
+  
+  p <- ggplot() + 
+    geom_point(df1, mapping = aes(time, y), size = 1) + 
+    geom_line(df2, mapping = aes(time, pred), color = "blue") +
+    annotate(geom = "text", x = 2.5, y = 20, label = paste("cumulative variation =", round(arc[id],3)), hjust = 1) +
+    xlim(0, 2.5) +
+    ylim(-20, 20) +
+    #ggtitle(paste0("Subject ", id, " (Group ", df1$group[1]+1,")")) +
+    ggtitle("Scenario 1") +
+    theme_classic() + 
+    theme(plot.title = element_text(hjust = 0.5))
+  sim_plot[[i]] <- p
+}
+grid.arrange(grobs = sim_plot, ncol = 3)
+#grid.arrange(grobs = list(sim_plot[[1]], sim_plotd4[[1]], sim_plotd4k3[[1]]), ncol = 3)
+```
+
+## 4.3 Bias and MSE
+function to generate data
+```{r}
+beta<-1.5; sigma_0<-1.5; sigma_1<-1; sigma_2<-2
+simulation <- function(n, obs, seed=NULL, degree=3){
+  if (!is.null(seed)) set.seed(seed)
+  time <- rweibull(n*obs, 2)
+  ID <- rep(1:n, obs)
+  group <- sample(c(1,0), size = n, replace = T)
+  group <- group[ID]
+  
+  #generate random effect coefficients
+  Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2), nrow = 3)
+  b <- MASS::mvrnorm(n, c(0.1, 0.2, 0.3), Sigma)
+  b0 <- b[,1]
+  b1 <- b[,2]
+  b2 <- b[,3]
+  B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]
+  
+  #b-spline
+  bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+  
+  #fix effect coef
+  epsilon <- rnorm(n*obs, 0, 4)
+  
+  y <- beta*group + B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + epsilon
+  df <- data.frame(ID = ID, time = time, group = group, y = y, bs1 = bs_m[,1], bs2 = bs_m[,2], bs3 = bs_m[,3])
+  
+  lme.bs <- lmer(y ~ -1 + group + (-1 + bs1 + bs2 + bs3 | ID), data = df, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+  
+  #coef
+  coef_est <- as.numeric(fixef(lme.bs))
+  #variance-covariance matrix
+  cov_m <- as.matrix(Matrix::bdiag(VarCorr(lme.bs)))
+  sigma1_est <- sqrt(cov_m[1,1])
+  sigma2_est <- sqrt(cov_m[2,2])
+  sigma3_est <- sqrt(cov_m[3,3])
+  cov12_est <- cov_m[1,2]
+  cov13_est <- cov_m[1,3]
+  cov23_est <- cov_m[2,3]
+  return(c(coef_est, sigma1_est, sigma2_est, sigma3_est, cov12_est, cov13_est, cov23_est))
+}
+```
+
+parallel computing
+```{r}
+library(doParallel)
+n_core <- detectCores() - 1
+cl <- parallel::makeCluster(n_core)
+doParallel::registerDoParallel(cl)
+```
+
+data generation (n=10000,obs=40)
+```{r}
+start.time <- Sys.time()
+sim_n <- 1000
+# Using foreach to replicate the function in parallel
+results <- foreach(i = 1:sim_n, .packages=c("lme4", "splines")) %dopar% {
+  simulation(n = 10000, obs = 40, seed = i) #n=10000,5000,2000,500,100,50; obs=40,10,5
+}
+end.time <- Sys.time()
+end.time - start.time
+
+#bias
+mean(sapply(results, function(x) x[1] - beta)); mean(sapply(results, function(x) x[2] - sigma_0)); mean(sapply(results, function(x) x[3] - sigma_1)); mean(sapply(results, function(x) x[4] - sigma_2)); mean(sapply(results, function(x) x[5] - 0.3*sigma_0*sigma_1)); mean(sapply(results, function(x) x[6] - 0.3*sigma_0*sigma_2)); mean(sapply(results, function(x) x[7] - 0.3*sigma_1*sigma_2))
+
+#MSE
+mean(sapply(results, function(x) (x[1] - beta)^2)); mean(sapply(results, function(x) (x[2] - sigma_0)^2)); mean(sapply(results, function(x) (x[3] - sigma_1)^2)); mean(sapply(results, function(x) (x[4] - sigma_2)^2));
+mean(sapply(results, function(x) (x[5] - 0.3*sigma_0*sigma_1)^2)); mean(sapply(results, function(x) (x[6] - 0.3*sigma_0*sigma_2)^2)); mean(sapply(results, function(x) (x[7] - 0.3*sigma_1*sigma_2)^2))
+```
+
+boxplot
+```{r}
+library(ggplot2)
+library(reshape2)
+beta_bias <- sapply(results, function(x) x[1] - beta)
+sigma1 <- sapply(results, function(x) x[2] - sigma_0)
+sigma2 <- sapply(results, function(x) x[3] - sigma_1)
+sigma3 <- sapply(results, function(x) x[4] - sigma_2)
+bias <- data.frame(beta_bias, sigma1, sigma2, sigma3)
+ggplot(melt(bias), aes(x=variable, y=value)) +
+  geom_boxplot(aes(fill=variable)) + 
+  ylim(-1.5, 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic()
+```
+
+
+### 4.4 Comparison of different methods
+generate data
+```{r}
+set.seed(1234)
+############ group 1 ############
+n <- 2500; obs <- 40
+beta <- 1.5
+time <- rweibull(n*obs, 2)
+ID <- rep(1:n, obs)
+group <- rep(1, n)
+group <- group[ID]
+
+#generate random effect coefficients
+sigma_0 <- 1.5; sigma_1 <- 1.0; sigma_2 <- 2
+Sigma <- matrix(c(sigma_0^2, 0.3*sigma_0*sigma_1, 0.3*sigma_0*sigma_2,
+                  0.3*sigma_0*sigma_1, sigma_1^2, 0.3*sigma_1*sigma_2,
+                  0.3*sigma_0*sigma_2, 0.3*sigma_1*sigma_2, sigma_2^2), nrow = 3)
+b <- MASS::mvrnorm(n, c(0, 0, 0), Sigma)
+b0 <- b[,1]
+b1 <- b[,2]
+b2 <- b[,3]
+B0 <- b0[ID]; B1 <- b1[ID]; B2 <- b2[ID]
+mean(b0); mean(b1); mean(b2); cov(b)
+
+epsilon <- rnorm(n*obs, 0, 4)
+
+#b-spline
+degree <- 3
+bs_m <- bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)
+
+y <-  B0*bs_m[,1] + B1*bs_m[,2] + B2*bs_m[,3] + epsilon 
+df <- data.frame(ID = ID, time = time, group = group, y = y)
+
+############ group 2 ############
+set.seed(1235)
+n <- 2500; obs <- 40
+time <- rweibull(n*obs, 2)
+ID <- rep((n+1):(2*n), obs)
+group <- rep(0, n)
+group <- group[ID-n]
+
+epsilon <- rnorm(n*obs, -0.03, 4.5)
+
+y <-  epsilon 
+df1 <- data.frame(ID = ID, time = time, group = group, y = y)
+df <- rbind(df, df1)
+
+# fit the model
+lme.bs <- lmer(y ~ -1 + group + (-1 + bs(time, Boundary.knots = quantile(time, c(0,0.75)), degree = degree)| ID), data = df, control=lmerControl(check.conv.grad= .makeCC("ignore",tol = 2e-3, relTol = NULL)))
+summary(lme.bs)
+```
+
+```{r, warning=FALSE}
+#predictive data
+long_time <- c()
+ID <- c()
+group <- c()
+for (id in unique(df$ID)) {
+  long_time <- append(long_time, seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))
+  ID <- append(ID, rep(id, length(seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))))
+  group <- append(group, rep(df$group[df$ID == id][1], length(seq(min(df$time[df$ID == id]), max(df$time[df$ID == id]), by = max(df$time)/1000))))
+}
+
+new_sim <- data.frame(ID = ID, time = long_time, group = group)
+new_sim$pred <- predict(lme.bs, new_sim)
+
+#cumulative variation
+degree <- 3;interval <- 0.001;fixcoef <- fixef(lme.bs); rancoef <- ranef(lme.bs)$ID
+arc <- c()
+for (id in unique(new_sim$ID)) {
+  endtime <- max(new_sim$time[new_sim$ID == id])
+  starttime <- min(new_sim$time[new_sim$ID == id])
+  group_index <- new_sim$group[new_sim$ID == id][1]
+  b_vec <- unlist(c(fixcoef, rancoef[rownames(rancoef) == id,]))
+  gt <- seq(starttime, endtime, by = interval)
+  b_mat <- cbind(group_index, bs(gt, Boundary.knots = quantile(time, c(0,0.75)), degree = degree))
+  g_grid <- b_mat %*% b_vec
+  arc <- append(arc, sum(sqrt((g_grid[-length(gt)]-g_grid[-1])^2+interval^2)))
+}
+
+```
+
+Kruskal-Wallis test
+```{r}
+#subject-level measurements
+test_df <- df %>% group_by(ID) %>%
+  summarise(group = group[1], mean = mean(y), sd = sd(y), cv = mean(y)/sd(y)) 
+test_df$cum_v <- arc
+test_df$group <- as.factor(test_df$group)
+test_df <- as.data.frame(test_df)
+
+#Kruskal-Wallis test
+krus_test_comp_5000 <- c()
+for (i in 3:6) {
+  krus_test <- kruskal.test(test_df[, i], test_df$group)$p.value
+  krus_test_comp_5000 <- c(krus_test_comp_5000, krus_test)
+}
+krus_test_comp_5000
+```
+
