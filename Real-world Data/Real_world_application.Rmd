@@ -123,21 +123,21 @@ PAP_month %>%
 
 
 ## 3.2 cross-validation
+spap (heart rate, dpap, mpap use similar codes)
 ```{r}
 library(doParallel)
 n_core <- detectCores() - 1
 cl <- parallel::makeCluster(n_core)
 doParallel::registerDoParallel(cl)
 
-#heart rate
-hr_RMSE <- vector(mode = "list", length = 5) #spap, dpap, mpap
+#heart rate 
+spap_RMSE <- vector(mode = "list", length = 5)
 start.time <- Sys.time()
-knots <- list(0.5, c(0.25,0.75), c(0.25,0.5,0.75))
-hr_RMSE <- foreach(i = 3:7, .packages=c("lme4", "splines", "hetoolkit")) %dopar% {
+spap_RMSE <- foreach(i = 3:7, .packages=c("lme4", "splines", "hetoolkit")) %dopar% {
   rmse_i <- numeric(2)
   for (j in 1:3) {
-    lme.hr <- lmer(heart_rate ~  long_time + (1 + bs(long_time, knots = quantile(long_time, knots[[j]]), Boundary.knots = range(long_time), degree = i)|ID), data = PAP_month)
-    out <- model_cv(model = lme.hr, data = PAP_month, group = "ID", k = 5, r=10)
+    lme.spap <- lmer(systolic_PAP ~  long_time + (1 + bs(long_time, knots = quantile(long_time, knots[[j]]), Boundary.knots = range(long_time), degree = i)|ID), data = PAP_month)
+    out <- model_cv(model = lme.spap, data = PAP_month, group = "ID", k = 5, r=10)
    rmse_i[j] <- out$RMSE
   }
   return(list(rmse_i))
@@ -149,7 +149,7 @@ end.time <- Sys.time()
 ### plot
 ```{r}
 degree <- 4
-lme.hr <- lmer(heart_rate ~  long_time + (1 + bs(long_time, knots = quantile(long_time, c(0.25, 0.75)), Boundary.knots = range(long_time), degree = degree)|ID), data = PAP_month) #spap, dpap, mpap
+lme.spap <- lmer(systolic_PAP ~  long_time + (1 + bs(long_time, knots = quantile(long_time, c(0.25, 0.75)), Boundary.knots = range(long_time), degree = degree)|ID), data = PAP_month)
 
 #predict data
 id_all <- unique(PAP_month$ID)
@@ -161,33 +161,33 @@ for (id in id_all) {
 }
 
 new_pap <- data.frame(ID = ID, long_time = long_time)
-pred_hr <- predict(lme.hr, new_pap)
-new_pap <- cbind(new_pap, pred_hr)
+pred_spap <- predict(lme.spap, new_pap_spap)
+new_pap_spap <- cbind(new_pap_spap, pred_spap)
 
 #arc length
-degree <- 4;interval <- 0.001;fixcoef <- fixef(lme.hr); rancoef <- ranef(lme.hr)$ID
+degree <- 4;interval <- 0.001;fixcoef <- fixef(lme.spap); rancoef <- ranef(lme.spap)$ID
 deltat <- c(1/6, 1/3, 0.5, 1, 1.5)
 arc <- c() #arc2, arc4, arc6, arc12, arc18
 for (id in id_all) {
-  endtime <- max(new_pap$long_time[new_pap$ID == id])
-  starttime <- endtime - endtime #starttime <- endtime - deltat
+  endtime <- max(new_pap$long_time[new_pap$ID == id]) 
+  starttime <- endtime - endtime
   b_vec <- unlist(c(fixcoef, rancoef[rownames(rancoef) == id,]))
   if(starttime >= 0){
   gt <- seq(starttime, endtime, by = interval)
   b_mat <- cbind(rep(1,length(gt)), gt, rep(1,length(gt)), bs(gt, knots = quantile(PAP_month$long_time, c(0.25, 0.75)), Boundary.knots = range(PAP_month$long_time), degree = degree))
   g_grid <- b_mat %*% b_vec
-  arc <- append(arc, sum(sqrt((g_grid[-length(gt)]-g_grid[-1])^2+interval^2)))} #arc2, arc4, arc6, arc12, arc18
+  arc <- append(arc, sum(sqrt((g_grid[-length(gt)]-g_grid[-1])^2+interval^2)))}
   else{arc <- append(arc, NA)}
 }
 
 
 arc_length <- data.frame(ID = id_all)
-arc_length$arc_hr <- arc
-arc_length$m2_hr <- arc2
-arc_length$m4_hr <- arc4
-arc_length$m6_hr <- arc6
-arc_length$m12_hr <- arc12
-arc_length$m18_hr <- arc18
+arc_length$arc_spap <- arc
+arc_length$m2_spap <- arc2
+arc_length$m4_spap <- arc4
+arc_length$m6_spap <- arc6
+arc_length$m12_spap <- arc12
+arc_length$m18_spap <- arc18
 
 
 #plot
@@ -199,15 +199,15 @@ for (id in id_select) {
   df1 <- new_pap[new_pap$ID == id,]
   
   p <- ggplot() + 
-    geom_point(df, mapping = aes(long_time, heart_rate), size = 1) + 
-    geom_line(df1, mapping = aes(long_time, pred_hr), color = "blue") +
-    annotate(geom = "text", x = 4.5, y = 105, label = paste("mean = ", round(mean(df$heart_rate),2), "\ncumulative variation =", round(arc_length$arc_hr[arc_length$ID == id],3)), hjust = 1) +
+    geom_point(df, mapping = aes(long_time, systolic_PAP), size = 1) + 
+    geom_line(df1, mapping = aes(long_time, pred_spap), color = "blue") +
+    annotate(geom = "text", x = 4.5, y = 70, label = paste("mean = ", round(mean(df$systolic_PAP),2), "\ncumulative variation =", round(arc_length$arc_spap[arc_length$ID == id],3)), hjust = 1) +
     geom_vline(xintercept = max(df$long_time), color =  "red", linetype="dotdash") +
     xlim(0,4.5) +
-    ylim(65,110) +
+    ylim(25, 75) +
     ggtitle(paste0("Subject ", id)) +
-    theme_classic() + 
-    theme(plot.title = element_text(hjust = 0.5)) 
+    theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5))
   plot_list[[i]] <- p
 }
 
