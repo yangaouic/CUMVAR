@@ -589,7 +589,7 @@ Kruskal-Wallis test
 ```{r}
 #subject-level measurements
 test_df <- df %>% group_by(ID) %>%
-  summarise(group = group[1], mean = mean(y), sd = sd(y), cv = mean(y)/sd(y)) 
+  summarise(group = group[1], mean = mean(y), sd = sd(y), cv = sd(y)/mean(y)) 
 test_df$cum_v <- arc
 test_df$group <- as.factor(test_df$group)
 test_df <- as.data.frame(test_df)
